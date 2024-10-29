@@ -1,0 +1,11 @@
+[package]
+name = "all-in-icmp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nfq = "*"
+
+[profile.release]
+strip = true  # Automatically strip symbols from the binary.
+opt-level = 3 # Optimize for speed.
