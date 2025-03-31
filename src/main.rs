@@ -7,17 +7,6 @@ const PROTO_UDP: u8 = 0x11;
 
 const QUE: u16 = 444;
 
-const MSG: &str = r"
- ______  __       __          ______   __  __      ______   ____              ____    
-/\  _  \/\ \     /\ \        /\__  _\ /\ \/\ \    /\__  _\ /\  _`\    /'\_/`\/\  _`\  
-\ \ \L\ \ \ \    \ \ \       \/_/\ \/ \ \ `\\ \   \/_/\ \/ \ \ \/\_\ /\      \ \ \L\ \
- \ \  __ \ \ \  __\ \ \  __     \ \ \  \ \ , ` \     \ \ \  \ \ \/_/_\ \ \__\ \ \ ,__/
-  \ \ \/\ \ \ \L\ \\ \ \L\ \     \_\ \__\ \ \`\ \     \_\ \__\ \ \L\ \\ \ \_/\ \ \ \/ 
-   \ \_\ \_\ \____/ \ \____/     /\_____\\ \_\ \_\    /\_____\\ \____/ \ \_\\ \_\ \_\ 
-    \/_/\/_/\/___/   \/___/      \/_____/ \/_/\/_/    \/_____/ \/___/   \/_/ \/_/\/_/ 
-";
-
-static mut DISPLAY_CD: isize = 0;
 use std::{
     net::{Ipv4Addr, SocketAddrV4},
     str::FromStr,
@@ -155,7 +144,6 @@ fn handle(packet: &mut [u8], broadcast: Option<Ipv4Addr>) {
 }
 
 fn main() {
-    println!("\x1b[32m{}\x1b[0m", MSG);
     let broadcast4 = std::env::args()
         .nth(1)
         .and_then(|ip: String| Ipv4Addr::from_str(&ip).ok());
