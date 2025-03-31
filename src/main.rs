@@ -1,8 +1,27 @@
+#![feature(ip_from)]
 use nfq::{Queue, Verdict};
 
 const PROTO_ICMP: u8 = 0x1;
 const PROTO_TCP: u8 = 0x6;
 const PROTO_UDP: u8 = 0x11;
+
+const QUE: u16 = 444;
+
+const MSG: &str = r"
+ ______  __       __          ______   __  __      ______   ____              ____    
+/\  _  \/\ \     /\ \        /\__  _\ /\ \/\ \    /\__  _\ /\  _`\    /'\_/`\/\  _`\  
+\ \ \L\ \ \ \    \ \ \       \/_/\ \/ \ \ `\\ \   \/_/\ \/ \ \ \/\_\ /\      \ \ \L\ \
+ \ \  __ \ \ \  __\ \ \  __     \ \ \  \ \ , ` \     \ \ \  \ \ \/_/_\ \ \__\ \ \ ,__/
+  \ \ \/\ \ \ \L\ \\ \ \L\ \     \_\ \__\ \ \`\ \     \_\ \__\ \ \L\ \\ \ \_/\ \ \ \/ 
+   \ \_\ \_\ \____/ \ \____/     /\_____\\ \_\ \_\    /\_____\\ \____/ \ \_\\ \_\ \_\ 
+    \/_/\/_/\/___/   \/___/      \/_____/ \/_/\/_/    \/_____/ \/___/   \/_/ \/_/\/_/ 
+";
+
+static mut DISPLAY_CD: isize = 0;
+use std::{
+    net::{Ipv4Addr, SocketAddrV4},
+    str::FromStr,
+};
 
 fn calculate_checksum(buffer: &[u8]) -> u16 {
     let mut sum = 0u32;
@@ -46,6 +65,7 @@ fn add_wrapper(packet: &mut [u8]) {
     put_checksum(&mut packet[..20], 10);
 }
 
+#[inline]
 fn rm_wrapper(packet: &mut [u8]) {
     match packet[6] & 0x80 {
         0 => {
@@ -69,74 +89,92 @@ fn is_wrapped(packet: &[u8]) -> bool {
     packet[9] == PROTO_ICMP
 }
 
-fn display(packet: &[u8]) {
-    use std::net::Ipv4Addr;
-    let src = Ipv4Addr::new(packet[12], packet[13], packet[14], packet[15]);
-    let dst = Ipv4Addr::new(packet[16], packet[17], packet[18], packet[19]);
+#[inline]
+fn is_broadcast(packet: &[u8]) -> bool {
+    let dst = std::net::Ipv4Addr::from_octets(*packet[16..].first_chunk().unwrap());
+    dst.octets()[3] == 255
+}
 
+fn display(packet: &[u8]) {
+    // unsafe {
+    //     if DISPLAY_CD < 0 {
+    //         return;
+    //     } else {
+    //         DISPLAY_CD -= 1;
+    //     }
+    // }
+    let src = Ipv4Addr::from_octets(*packet[12..].first_chunk().unwrap());
+    let dst = Ipv4Addr::from_octets(*packet[16..].first_chunk().unwrap());
     match packet[9] {
-        0x1 => {
-            println!(
-                "ICMP {} -> {} ==>{}",
+        PROTO_ICMP => {
+            print!(
+                "ICMP {:>20} -> {:>20} {}",
                 src,
                 dst,
-                String::from_utf8_lossy(&packet[20..])
+                match packet[20] {
+                    0 => "Echo Reply  ",
+                    8 => "Echo Request",
+                    _ => "Unknown     ",
+                }
             );
         }
-        0x6 => {
-            let src_port = u16::from_be_bytes([packet[20], packet[21]]);
-            let dst_port = u16::from_be_bytes([packet[22], packet[23]]);
-            println!("TCP {}:{} -> {}:{}", src, src_port, dst, dst_port);
+        PROTO_TCP => {
+            let src = SocketAddrV4::new(src, u16::from_be_bytes([packet[20], packet[21]]));
+            let dst = SocketAddrV4::new(dst, u16::from_be_bytes([packet[22], packet[23]]));
+            print!("TCP  {:>20} -> {:<20}", src, dst);
         }
-        0x17 => {
-            let src_port = u16::from_be_bytes([packet[20], packet[21]]);
-            let dst_port = u16::from_be_bytes([packet[22], packet[23]]);
-            println!("UDP {}:{} -> {}:{}", src, src_port, dst, dst_port);
+        PROTO_UDP => {
+            let src = SocketAddrV4::new(src, u16::from_be_bytes([packet[20], packet[21]]));
+            let dst = SocketAddrV4::new(dst, u16::from_be_bytes([packet[22], packet[23]]));
+            print!("UDP  {:>20} -> {:<20}", src, dst);
         }
         _ => {
-            println!("Unknown protocol");
+            print!("Unknown protocol {:X}", packet[9]);
         }
     }
+    println!("\tlen:[{}]", packet.len());
 }
-
-fn handle_in() {
-    let mut queue = Queue::open().expect("Failed to open queue");
-    queue.bind(444).expect("Failed to bind queue");
-
-    while let Ok(mut msg) = queue.recv() {
-        let payload = msg.get_payload_mut();
-        if is_wrapped(payload) {
-            rm_wrapper(payload);
+fn handle(packet: &mut [u8], broadcast: Option<Ipv4Addr>) {
+    if is_wrapped(packet) {
+        rm_wrapper(packet);
+        display(packet);
+    } else if should_warp(packet) {
+        display(packet);
+        if is_broadcast(packet) {
+            if let Some(broadcast) = broadcast {
+                packet[16] = broadcast.octets()[0];
+                packet[17] = broadcast.octets()[1];
+                packet[18] = broadcast.octets()[2];
+                packet[19] = broadcast.octets()[3];
+            }
         }
-        display(payload);
-        println!("Recv {:X?}", payload);
-        msg.set_verdict(Verdict::Accept);
-        queue.verdict(msg).unwrap();
+        add_wrapper(packet);
+    } else {
+        display(packet);
     }
-    println!("Exiting In");
-}
-
-fn handle_out() {
-    let mut queue = Queue::open().expect("Failed to open queue");
-    queue.bind(445).expect("Failed to bind queue");
-
-    while let Ok(mut msg) = queue.recv() {
-        let payload = msg.get_payload_mut();
-        display(payload);
-        println!("Send {:X?}", payload);
-        if should_warp(payload) {
-            add_wrapper(payload);
-        }
-        msg.set_verdict(Verdict::Accept);
-        queue.verdict(msg).unwrap();
-    }
-    println!("Exiting Out");
 }
 
 fn main() {
-    let handle1 = std::thread::spawn(handle_in);
-    let handle2 = std::thread::spawn(handle_out);
+    println!("\x1b[32m{}\x1b[0m", MSG);
+    let broadcast4 = std::env::args()
+        .nth(1)
+        .and_then(|ip: String| Ipv4Addr::from_str(&ip).ok());
+    println!("[info] broadcast redirect to {:?}", broadcast4);
 
-    handle1.join().expect("Thread 1 panicked");
-    handle2.join().expect("Thread 2 panicked");
+    let mut queue = Queue::open().expect("Failed to open queue");
+    queue.bind(QUE).expect("Run as admin?");
+    println!("[info] listen to queue {}", QUE);
+
+    while let Ok(mut msg) = queue.recv() {
+        let payload = msg.get_payload_mut();
+        match payload[0] >> 4 {
+            4 => handle(payload, broadcast4),
+            6 => println!("Unimplemented IPv6"),
+            x @ _ => {
+                println!("Unknown IP protocol {}", x);
+            }
+        }
+        msg.set_verdict(Verdict::Accept);
+        queue.verdict(msg).unwrap();
+    }
 }
