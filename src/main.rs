@@ -85,18 +85,11 @@ fn is_broadcast(packet: &[u8]) -> bool {
 }
 
 fn display(packet: &[u8]) {
-    // unsafe {
-    //     if DISPLAY_CD < 0 {
-    //         return;
-    //     } else {
-    //         DISPLAY_CD -= 1;
-    //     }
-    // }
     let src = Ipv4Addr::from_octets(*packet[12..].first_chunk().unwrap());
     let dst = Ipv4Addr::from_octets(*packet[16..].first_chunk().unwrap());
     match packet[9] {
         PROTO_ICMP => {
-            print!(
+            eprint!(
                 "ICMP {:>20} -> {:>20} {}",
                 src,
                 dst,
@@ -110,24 +103,26 @@ fn display(packet: &[u8]) {
         PROTO_TCP => {
             let src = SocketAddrV4::new(src, u16::from_be_bytes([packet[20], packet[21]]));
             let dst = SocketAddrV4::new(dst, u16::from_be_bytes([packet[22], packet[23]]));
-            print!("TCP  {:>20} -> {:<20}", src, dst);
+            eprint!("TCP  {:>20} -> {:<20}", src, dst);
         }
         PROTO_UDP => {
             let src = SocketAddrV4::new(src, u16::from_be_bytes([packet[20], packet[21]]));
             let dst = SocketAddrV4::new(dst, u16::from_be_bytes([packet[22], packet[23]]));
-            print!("UDP  {:>20} -> {:<20}", src, dst);
+            eprint!("UDP  {:>20} -> {:<20}", src, dst);
         }
         _ => {
-            print!("Unknown protocol {:X}", packet[9]);
+            eprint!("Unknown protocol {:X}", packet[9]);
         }
     }
-    println!("\tlen:[{}]", packet.len());
+    eprintln!("\tlen:[{}]", packet.len());
 }
 fn handle(packet: &mut [u8], broadcast: Option<Ipv4Addr>) {
     if is_wrapped(packet) {
         rm_wrapper(packet);
+        #[cfg(debug_assertions)]
         display(packet);
     } else if should_warp(packet) {
+        #[cfg(debug_assertions)]
         display(packet);
         if is_broadcast(packet) {
             if let Some(broadcast) = broadcast {
@@ -147,19 +142,19 @@ fn main() {
     let broadcast4 = std::env::args()
         .nth(1)
         .and_then(|ip: String| Ipv4Addr::from_str(&ip).ok());
-    println!("[info] broadcast redirect to {:?}", broadcast4);
+    eprintln!("[info] broadcast redirect to {:?}", broadcast4);
 
     let mut queue = Queue::open().expect("Failed to open queue");
     queue.bind(QUE).expect("Run as admin?");
-    println!("[info] listen to queue {}", QUE);
+    eprintln!("[info] listen to queue {}", QUE);
 
     while let Ok(mut msg) = queue.recv() {
         let payload = msg.get_payload_mut();
         match payload[0] >> 4 {
             4 => handle(payload, broadcast4),
-            6 => println!("Unimplemented IPv6"),
+            6 => eprintln!("Unimplemented IPv6"),
             x @ _ => {
-                println!("Unknown IP protocol {}", x);
+                eprintln!("Unknown IP protocol {}", x);
             }
         }
         msg.set_verdict(Verdict::Accept);
